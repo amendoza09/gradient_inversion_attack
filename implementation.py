@@ -7,11 +7,13 @@ import numpy as np
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-
+from cifar10_models.resnet import resnet50
 
 def main():
     
-    steps = int(input(f"number of steps: "))
+    # define model
+    model = resnet50(pretrained=True)
+    
     # define transforms
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -32,7 +34,7 @@ def main():
     # save the image
     save_image(target, 'target.png')
     # gradient of image
-    target_grad = target.clone().detatch.requires_grad_(True)
+    target_grad = target.clone().detach.requires_grad_(True)
 
     # initialize random data using Gaussian Distribution
     rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
@@ -43,6 +45,7 @@ def main():
     # define optimize function using sgd with learning rate 0.1
     optimize = optim.SGD([rand_data], lr=0.1)
 
+    steps = int(input("number of steps: "))
     # loop for optimizition
     for step in range(steps):
         optimize.zero_grad()  # reset gradient
@@ -50,7 +53,7 @@ def main():
         loss.backward()  # backward pass for computing gradients
         optimize.step()  # update the parameters based on gradients
 
-        if (step % 100) == 0:
+        if (step % 10) == 0:
             print(f"step: {step}, Loss: {loss.item()}")
 
     save_image(rand_data, 'recovered_img.png')
