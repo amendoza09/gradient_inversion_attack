@@ -10,6 +10,8 @@ from torchvision.utils import save_image
 
 
 def main():
+    
+    steps = int(input(f"number of steps: "))
     # define transforms
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -25,10 +27,12 @@ def main():
     # Get one image from the dataset
     data_iter = iter(test_load)
     image, label = next(data_iter)
-    target = image[127].unsqueeze(0)
+    target = image[0].unsqueeze(0)
 
     # save the image
     save_image(target, 'target.png')
+    # gradient of image
+    target_grad = target.clone().detatch.requires_grad_(True)
 
     # initialize random data using Gaussian Distribution
     rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
@@ -38,9 +42,6 @@ def main():
 
     # define optimize function using sgd with learning rate 0.1
     optimize = optim.SGD([rand_data], lr=0.1)
-
-    # number of steps
-    steps = 100000
 
     # loop for optimizition
     for step in range(steps):
