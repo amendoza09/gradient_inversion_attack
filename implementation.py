@@ -7,7 +7,7 @@ import numpy as np
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from cifar10_models.resnet import resnet18, resnet34, resnet50
+from cifar10_models.resnet import resnet50
 
 
 def main():
@@ -71,22 +71,19 @@ def main():
         
         # calculate loss respect to original label
         loss_rand = crossE(output_rand, target_label_tensor)
-        loss_rand.backward()
+        loss_rand.backward(create_graph=True)
+        
+        rand_data_grad = torch.autograd.grad(loss_rand, rand_data, create_graph=True)[0]
 
-        if rand_data.grad is not None:
-            # compare gradients
-            grad_loss = loss_func(rand_data.grad, target_grad)
-            # backward pass the gradient loss
-            grad_loss.backward()
-        else:
-            print("Error: rand_data.grad is None.")
-            break
+        # compare gradients
+        grad_loss = loss_func(rand_data_grad, target_grad)
+        # backward pass the gradient loss
+        grad_loss.backward()
         
         # update parameters
         optimize.step()
 
-        if i%50 == 0:
-            print(f"Step: {steps}, Loss: {grad_loss.item()}")
+        print(f"Step: {i}, Loss: {grad_loss.item()}")
 
     save_image(target_image, 'target_image.png')
     save_image(rand_data, 'recovereed_image.png')
