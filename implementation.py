@@ -9,54 +9,84 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from cifar10_models.resnet import resnet50
 
+# define data model
+def load_model():
+    model = models.resnet50(pretrained=True)
+    model.eval
+    return model
+
 def main():
-    
-    # define model
-    model = resnet50(pretrained=True)
     
     # define transforms
     transform = transforms.Compose([
+        transforms.Resize((224, 224)), # resnet size
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
+    # load test data
     test_data = datasets.CIFAR10(root='./data',
                                  train=False,
                                  download=True,
                                  transform=transform)
-    test_load = DataLoader(test_data, batch_size=128, shuffle=False)
+    test_load = DataLoader(test_data, batch_size=1, shuffle=False)
 
     # Get one image from the dataset
     data_iter = iter(test_load)
-    image, label = next(data_iter)
-    target = image[0].unsqueeze(0)
+    target_image = next(data_iter)
+    
+    #load model
+    model = load_model()
+        
+    # cross entropy
+    crossE = nn.CrossEntropyLoss()
 
-    # save the image
-    save_image(target, 'target.png')
-    # gradient of image
-    target_grad = target.clone().detach.requires_grad_(True)
+    # forward pass of target image
+    target_image.requries_grad_(True)
+    # gradient with respect to target image
+    output = model(target_image)
+
+    # get gradient of original image
+    target_label = output.argmax(dim=1)
+
+    # calculating loss and gradient for target image
+    loss = crossE(output, target_label)
+    loss.backward()
+
+    #getting gradients of the original image
+    target_grad = target_image.grad.detatch().clone()
 
     # initialize random data using Gaussian Distribution
-    rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
+    rand_data = torch.normal(0.5, 0.1, size=(1, 3, 224, 224), requires_grad=True)
 
-    # define loss funciton using L2 norm or Mean Squared Error
-    loss_func = nn.MSELoss()
-
-    # define optimize function using sgd with learning rate 0.1
+    # optimizer to update random image
     optimize = optim.SGD([rand_data], lr=0.1)
 
+    # loss function
+    loss_func = nn.MSGLoss()
+
     steps = int(input("number of steps: "))
-    # loop for optimizition
-    for step in range(steps):
-        optimize.zero_grad()  # reset gradient
-        loss = loss_func(rand_data, target)  # computing loss between outputs
-        loss.backward()  # backward pass for computing gradients
-        optimize.step()  # update the parameters based on gradients
+    for i in range(steps):
+        optimize.zero_grad()
 
-        if (step % 10) == 0:
-            print(f"step: {step}, Loss: {loss.item()}")
+        # forward pass for random image
+        output_rand = model(rand_data)
+        loss_rand = nn.CrossEntropyLoss()(output_rand, target_label)
+        loss_rand.backward()
 
-    save_image(rand_data, 'recovered_img.png')
+        # compare gradients
+        grad_loss = loss_func(rand_data.grad, target_grad)
+        # backward pass the gradient loss
+        grad_loss.backward()
+
+        # update parameters
+        optimize.step()
+
+        if i%50 == 0:
+            print(f"Step: {steps}, Loss: {grad_loss.item()}")
+
+    save_image(target_image, 'target_image.png')
+    save_image(rand_data, 'recovereed_image.png')
 
 
 if __name__ == "__main__":
