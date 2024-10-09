@@ -14,7 +14,7 @@ def main():
     
     # define transforms
     transform = transforms.Compose([
-        transforms.Resize((224, 224)), # resnet size
+        transforms.Resize((32, 32)), # resnet size
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
@@ -25,68 +25,80 @@ def main():
                                  download=True,
                                  transform=transform)
     test_load = DataLoader(test_data, batch_size=1, shuffle=False)
-
-    # Get one image from the dataset
-    data_iter = iter(test_load)
-    target_image, target_label = next(data_iter)
     
     #load model
     myModel = resnet50(pretrained=True)
     myModel.eval()
-        
+
     # cross entropy
     crossE = nn.CrossEntropyLoss()
 
+    # Get one image anc its label from the dataset
+    data_iter = iter(test_load)
+    target_image, target_label = next(data_iter)
+    
     target_image.requires_grad_(True)
     
-    # forward pass for target
-    output = myModel(target_image)
-
-    # get label of original image
-    target_label = target_label.item()
-
-    # calculating loss and gradient for target image
-    target_label_tensor = torch.tensor([target_label], dtype=torch.long)
-    loss = crossE(output, target_label_tensor)
+    # forward and backward passing allows calculation of gradient
+    # model processes target_image to create tensor, or forward pass to the model
+    output_target = myModel(target_image)
+    # find cross entropy between models output and the true label
+    loss = crossE(output_target, target_label)
+    # make sure all gradients are reset to not affect gradient calculation
+    myModel.zero_grad()
     loss.backward()
 
-    #getting gradients of the original image
-    target_grad = target_image.grad.detach().clone()
-
+    # getting gradients with respect to model parameter
+    target_grad = [param.grad.clone() for param in myModel.parameters()]
+    
     # initialize random data using Gaussian Distribution
-    rand_data = torch.normal(0.5, 0.1, size=(1, 3, 224, 224), requires_grad=True)
+    rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
 
     # optimizer to update random image
-    optimize = optim.SGD([rand_data], lr=0.1)
-
-    # loss function
-    loss_func = nn.MSELoss()
+    optimize = optim.SGD([rand_data], lr=0.25)
+    
+    # loss function using Mean Squared Error
+    mse_loss = nn.MSELoss()
 
     steps = int(input("number of steps: "))
+    
+    # optimization loop
     for i in range(steps):
+        # reset gradient so future calculations are not influenced
         optimize.zero_grad()
 
-        # forward pass for random image
+        # forward pass the random image
         output_rand = myModel(rand_data)
         
-        # calculate loss respect to original label
-        loss_rand = crossE(output_rand, target_label_tensor)
+        # calculate loss w respect to original label
+        loss_rand = crossE(output_rand, target_label)
+        
+        # reset models gradients
+        myModel.zero_grad()
+        
+        # backward pass for random image
         loss_rand.backward(create_graph=True)
         
-        rand_data_grad = torch.autograd.grad(loss_rand, rand_data, create_graph=True)[0]
+        # save gradients from the model parameters based off the random image
+        rand_data_grad = [param.grad.clone() for param in myModel.parameters()]
 
-        # compare gradients
-        grad_loss = loss_func(rand_data_grad, target_grad)
+        # compare gradients between the random and target image, use sum 
+        all_grad_losses = [mse_loss(rand_data_grad, target_grad) for rand_data_grad, target_grad in zip(rand_data_grad, target_grad)]
+        # calculate sum of entire batch of losses
+        grad_loss = torch.sum(torch.stack(all_grad_losses))
+        
         # backward pass the gradient loss
         grad_loss.backward()
         
         # update parameters
         optimize.step()
 
-        print(f"Step: {i}, Loss: {grad_loss.item()}")
+        if i%5 == 0:
+            print(f"Step: {i}, Loss: {grad_loss.item()}")
+            save_image(rand_data, 'recovereed_image.png')
 
     save_image(target_image, 'target_image.png')
-    save_image(rand_data, 'recovereed_image.png')
+    
 
 
 if __name__ == "__main__":
