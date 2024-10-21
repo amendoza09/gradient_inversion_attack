@@ -7,7 +7,7 @@ import numpy as np
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from cifar10_models.resnet import resnet50
+from cifar10_models.resnet import resnet18
 
 
 def main():
@@ -16,7 +16,8 @@ def main():
     transform = transforms.Compose([
         transforms.Resize((32, 32)), # resnet size
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize((0.4915, 0.4822, 0.4465),
+                             (0.2471, 0.2435, 0.2616))
     ])
 
     # load test data
@@ -24,10 +25,11 @@ def main():
                                  train=False,
                                  download=True,
                                  transform=transform)
-    test_load = DataLoader(test_data, batch_size=1, shuffle=False)
+    test_load = DataLoader(test_data, batch_size=28, shuffle=False)
+    
     
     #load model
-    myModel = resnet50(pretrained=True)
+    myModel = resnet18(pretrained=True)
     myModel.eval()
 
     # cross entropy
@@ -35,7 +37,10 @@ def main():
 
     # Get one image anc its label from the dataset
     data_iter = iter(test_load)
-    target_image, target_label = next(data_iter)
+    image, label = next(data_iter)
+    target_image = image[25].unsqueeze(0)
+    target_label = label[25]
+    
     
     target_image.requires_grad_(True)
     
