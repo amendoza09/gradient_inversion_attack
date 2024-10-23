@@ -2,6 +2,8 @@ import torch
 import torchvision
 import torch.nn as nn
 import torch.optim as optim
+import torch.transforms as transform
+import torchvision
 import matplotlib.pyplot as plt
 import numpy as np
 from torchvision import datasets, transforms, models
@@ -39,7 +41,7 @@ def main():
     data_iter = iter(test_load)
     image, label = next(data_iter)
     target_image = image[25].unsqueeze(0)
-    target_label = label[25]
+    target_label = label[25].unsqueeze(0)
     
     
     target_image.requires_grad_(True)
@@ -60,7 +62,7 @@ def main():
     rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
 
     # optimizer to update random image
-    optimize = optim.SGD([rand_data], lr=0.25)
+    optimize = optim.SGD([rand_data], lr=0.1)
     
     # loss function using Mean Squared Error
     mse_loss = nn.MSELoss()
@@ -88,18 +90,16 @@ def main():
         rand_data_grad = [param.grad.clone() for param in myModel.parameters()]
 
         # compare gradients between the random and target image, use sum 
-        all_grad_losses = [mse_loss(rand_data_grad, target_grad) for rand_data_grad, target_grad in zip(rand_data_grad, target_grad)]
-        # calculate sum of entire batch of losses
-        grad_loss = torch.sum(torch.stack(all_grad_losses))
+        all_grad_losses = sum(mse_loss(rand_data_grad, target_grad) for rand_data_grad, target_grad in zip(rand_data_grad, target_grad))
         
         # backward pass the gradient loss
-        grad_loss.backward()
+        all_grad_losses.backward()
         
         # update parameters
         optimize.step()
 
         if i%5 == 0:
-            print(f"Step: {i}, Loss: {grad_loss.item()}")
+            print(f"Step: {i}, Loss: {all_grad_losses.item()}")
             save_image(rand_data, 'recovereed_image.png')
 
     save_image(target_image, 'target_image.png')
