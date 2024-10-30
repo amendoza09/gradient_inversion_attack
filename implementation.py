@@ -2,15 +2,20 @@ import torch
 import torchvision
 import torch.nn as nn
 import torch.optim as optim
-import torch.transforms as transform
+import torchvision.transforms as transform
 import torchvision
 import matplotlib.pyplot as plt
 import numpy as np
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from cifar10_models.resnet import resnet18
+from pytorch_resnet_cifar10.resnet import resnet20
 
+# modifications:
+# change model to resnet20
+# remove relu to sigmoid and remove strides
+# change resnet.py to new resnet file
+# use lbfgs instead of sgd
 
 def main():
     
@@ -31,24 +36,25 @@ def main():
     
     
     #load model
-    myModel = resnet18(pretrained=True)
+    myModel = resnet20()
     myModel.eval()
-
+    
     # cross entropy
     crossE = nn.CrossEntropyLoss()
 
     # Get one image anc its label from the dataset
+    img_index = 20
     data_iter = iter(test_load)
     image, label = next(data_iter)
-    target_image = image[25].unsqueeze(0)
-    target_label = label[25].unsqueeze(0)
-    
+    target_image = image[img_index].unsqueeze(0)
+    target_label = label[img_index].unsqueeze(0)
     
     target_image.requires_grad_(True)
     
     # forward and backward passing allows calculation of gradient
     # model processes target_image to create tensor, or forward pass to the model
     output_target = myModel(target_image)
+    
     # find cross entropy between models output and the true label
     loss = crossE(output_target, target_label)
     # make sure all gradients are reset to not affect gradient calculation
@@ -62,7 +68,14 @@ def main():
     rand_data = torch.normal(0.5, 0.1, size=(1, 3, 32, 32), requires_grad=True)
 
     # optimizer to update random image
-    optimize = optim.SGD([rand_data], lr=0.1)
+    optimize = optim.LBFGS([rand_data], lr=1, max_iter=20, history_size=100)
+    
+    def closure():
+        optimize.zero_grad()
+        output_rand = myModel(rand_data)
+        loss_rand = crossE(output_rand, target_label)
+        loss_rand.backward()
+        return loss_rand
     
     # loss function using Mean Squared Error
     mse_loss = nn.MSELoss()
@@ -72,35 +85,11 @@ def main():
     # optimization loop
     for i in range(steps):
         # reset gradient so future calculations are not influenced
-        optimize.zero_grad()
-
-        # forward pass the random image
-        output_rand = myModel(rand_data)
+        optimize.step(closure)
         
-        # calculate loss w respect to original label
-        loss_rand = crossE(output_rand, target_label)
-        
-        # reset models gradients
-        myModel.zero_grad()
-        
-        # backward pass for random image
-        loss_rand.backward(create_graph=True)
-        
-        # save gradients from the model parameters based off the random image
-        rand_data_grad = [param.grad.clone() for param in myModel.parameters()]
-
-        # compare gradients between the random and target image, use sum 
-        all_grad_losses = sum(mse_loss(rand_data_grad, target_grad) for rand_data_grad, target_grad in zip(rand_data_grad, target_grad))
-        
-        # backward pass the gradient loss
-        all_grad_losses.backward()
-        
-        # update parameters
-        optimize.step()
-
-        if i%5 == 0:
-            print(f"Step: {i}, Loss: {all_grad_losses.item()}")
-            save_image(rand_data, 'recovereed_image.png')
+        if i%10 == 0:
+            print(f"Step: {i}, Loss: {closure().item()}, Target label: {target_label.item()}")
+            save_image(rand_data, 'recovered_image.png')
 
     save_image(target_image, 'target_image.png')
     
