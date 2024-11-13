@@ -1,24 +1,64 @@
 import torch
-import torchvision
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
-import torchvision.transforms as transform
-import torchvision
 import matplotlib.pyplot as plt
-import numpy as np
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-from pytorch_resnet_cifar10.resnet import resnet20
+from torch.autograd import grad
+from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
 
-# modifications:
-# change model to resnet20
-# remove relu to sigmoid and remove strides
-# change resnet.py to new resnet file
-# use lbfgs instead of sgd
+
+def deep_leakage(model, origin_grad):
+    # initialize random data using Gaussian Distribution
+    dummy_data = torch.normal(mean=0.5, std=0.1, size=(1,3,32,32), requires_grad=True)
+
+    # optimizer to update random image
+    optimize = optim.LBFGS([dummy_data], lr=1, max_iter=300, history_size=100)
+
+    # loss function using Mean Squared Error
+    mse_loss = nn.MSELoss()
+    crossEnt = nn.CrossEntropyLoss()
+    steps = int(input("Enter number of steps: "))
+    for i in range(steps):
+        def closure():
+            optimize.zero_grad()
+
+            reconstructed_output = model(dummy_data)
+
+            reconstructed_loss = crossEnt(reconstructed_output, origin_grad)
+            # Calculate gradients for random data
+            reconstructed_grad = torch.autograd.grad(reconstructed_loss, model.parameters(), create_graph=True)
+
+            grad_loss = sum(mse_loss(reconstructed_grad, origin_grad)
+                            for reconstructed_grad, origin_grad in zip(reconstructed_grad, target_grad))
+
+            grad_loss.backward()  # Backpropagate the gradient loss
+            return grad_loss
+
+        # reset gradient so future calculations are not influenced
+        loss_val = optimize.step(closure)
+        if i%10 == 0:
+            print(f"Step: {i}, Loss: {loss_val.item()}")
+            save_image(dummy_data.data, 'reconstructed_image.png')
+    return dummy_data
+
+def visualize_dummy_data(dummy_data):
+    # Convert to numpy for visualization
+    dummy_data_np = dummy_data.detach().numpy()
+
+    # Plot the first few images
+    num_images = min(5, dummy_data_np.shape[0])
+    plt.figure(figsize=(10, 2))
+    for i in range(num_images):
+        plt.subplot(1, num_images, i + 1)
+        plt.imshow(dummy_data_np[i].transpose(1, 2, 0))  # Change shape for plotting
+        plt.axis('off')
+    plt.show()
 
 def main():
-    
+
     # define transforms
     transform = transforms.Compose([
         transforms.Resize((32, 32)), # resnet size
@@ -33,69 +73,27 @@ def main():
                                  download=True,
                                  transform=transform)
     test_load = DataLoader(test_data, batch_size=1, shuffle=False)
-    steps = int(input("number of steps: "))
-    
-    # cross entropy
-    crossE = nn.CrossEntropyLoss()
 
-    # Get one image anc its label from the dataset
-    target_image, target_label = next(iter(test_load))
-    target_label = torch.tensor([target_label[0]], dtype=torch.long)
-    
-    #load model
-    myModel = resnet20()
+    # define model
+    myModel = resnet18(pretrained=True)
     myModel.eval()
-    
-    target_image.requires_grad_(True)
-    
-    output_target = myModel(target_image)
-    loss = crossE(output_target, target_label)
-     
+
+    # cross entropy
+    crossEnt = nn.CrossEntropyLoss()
+
+    # Get one image and its label from the dataset
+    image, label = next(iter(test_load))
+    target_image = image[0].unsqueeze(0)
+    target_label = image[0].unsqueeze(0)
+    target_label = torch.tensor([target_label], dtype=torch.long)
+    save_image(target_image, 'target_image.png')
+
+    output = myModel(target_image)
+    loss = crossEnt(output, target_label)
+
     myModel.zero_grad()
     loss.backward()
 
     # getting gradients with respect to model parameter
-    target_grad = [param.grad.clone() for param in myModel.parameters()]
-    
-    # initialize random data using Gaussian Distribution
-    rand_data = torch.normal(mean=0.5, std=0.1, size=(1,3,32,32), requires_grad=True)
-
-    # optimizer to update random image
-    optimize = optim.LBFGS([rand_data], lr=1, max_iter=steps, history_size=100)
-    
-    # loss function using Mean Squared Error
-    mse_loss = nn.MSELoss()
-
-    def closure():
-        
-        output_rand = myModel(rand_data)
-        loss_rand = crossE(output_rand, target_label)
-        loss_rand.backward(retain_graph=True)  # Retain graph to access it later
-        
-        # Calculate gradients for random data
-        rand_data_grad = [param.grad.clone().detach() for param in myModel.parameters()]
-                
-        # Compute the loss for matching gradients
-        grad_loss = sum(mse_loss(rand_data_grad, target_grad) for rand_data_grad, target_grad in zip(rand_data_grad, target_grad))
-
-        grad_loss.backward()  # Backpropagate the gradient loss
-        
-        return grad_loss
-    
-    # optimization loop
-    for i in range(steps):
-        # reset gradient so future calculations are not influenced
-        optimize.step(closure)
-        optimize.zero_grad()
-        
-        if i%10 == 0:
-            current_loss = closure().item()
-            print(f"Step: {i}, Loss: {current_loss}, Target label: {target_label.item()}")
-            save_image(rand_rand, 'recovered_image.png')
-
-    save_image(target_image, 'target_image.png')
-    
-
-
-if __name__ == "__main__":
-    main()
+    target_grads = [param.grad.clone().detach() for param in myModel.parameters()]
+                                                                                                      94,1          85%
