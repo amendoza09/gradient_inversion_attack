@@ -10,7 +10,7 @@ from torch.autograd import grad
 from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
 
 
-def deep_leakage(model, origin_grad):
+def deep_leakage(model, origin_grad, origin_label):
     # initialize random data using Gaussian Distribution
     dummy_data = torch.normal(mean=0.5, std=0.1, size=(1,3,32,32), requires_grad=True)
 
@@ -21,22 +21,24 @@ def deep_leakage(model, origin_grad):
     mse_loss = nn.MSELoss()
     crossEnt = nn.CrossEntropyLoss()
     steps = int(input("Enter number of steps: "))
+    def closure():
+        optimize.zero_grad()
+
+        reconstructed_output = model(dummy_data)
+
+        reconstructed_loss = crossEnt(reconstructed_output, origin_label)
+
+        # Calculate gradients for random data
+        reconstructed_grad = torch.autograd.grad(reconstructed_loss, model.parameters(), create_graph=True)
+
+        # Compute the loss for matching gradients
+        grad_loss = sum(mse_loss(reconstructed_g, origin_g)
+                for reconstructed_g, origin_g in zip(reconstructed_grad, origin_grad))
+
+        grad_loss.backward()  # Backpropagate the gradient loss
+        return grad_loss
+
     for i in range(steps):
-        def closure():
-            optimize.zero_grad()
-
-            reconstructed_output = model(dummy_data)
-
-            reconstructed_loss = crossEnt(reconstructed_output, origin_grad)
-            # Calculate gradients for random data
-            reconstructed_grad = torch.autograd.grad(reconstructed_loss, model.parameters(), create_graph=True)
-
-            grad_loss = sum(mse_loss(reconstructed_grad, origin_grad)
-                            for reconstructed_grad, origin_grad in zip(reconstructed_grad, target_grad))
-
-            grad_loss.backward()  # Backpropagate the gradient loss
-            return grad_loss
-
         # reset gradient so future calculations are not influenced
         loss_val = optimize.step(closure)
         if i%10 == 0:
@@ -83,12 +85,10 @@ def main():
 
     # Get one image and its label from the dataset
     image, label = next(iter(test_load))
-    target_image = image[0].unsqueeze(0)
-    target_label = image[0].unsqueeze(0)
-    target_label = torch.tensor([target_label], dtype=torch.long)
-    save_image(target_image, 'target_image.png')
+    target_label = torch.tensor([label], dtype=torch.long)
+    save_image(image, 'target_image.png')
 
-    output = myModel(target_image)
+    output = myModel(image)
     loss = crossEnt(output, target_label)
 
     myModel.zero_grad()
@@ -97,10 +97,8 @@ def main():
     # getting gradients with respect to model parameter
     target_grads = [param.grad.clone().detach() for param in myModel.parameters()]
 
-    
-    dummy_data = deep_leakage(myModel, target_grads)
+    dummy_data = deep_leakage(myModel, target_grads, target_label)
     visualize_dummy_data(dummy_data)
 
 if __name__ == "__main__":
     main()
-              
