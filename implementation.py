@@ -96,4 +96,11 @@ def main():
 
     # getting gradients with respect to model parameter
     target_grads = [param.grad.clone().detach() for param in myModel.parameters()]
-                                                                                                      94,1          85%
+
+    
+    dummy_data = deep_leakage(myModel, target_grads)
+    visualize_dummy_data(dummy_data)
+
+if __name__ == "__main__":
+    main()
+              
