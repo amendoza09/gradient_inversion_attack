@@ -1,15 +1,13 @@
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
-from torch.autograd import grad
+import matplotlib.pyplot as plt
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from torchvision import datasets, models, transforms
 from torchvision.utils import save_image
-from lenet import LeNet, weights_init
-
+from pytorch_resnet_cifar10.resnet import resnet20
+#from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
 
 def deep_leakage(model, origin_grad, origin_label):
     # initialize random data using Gaussian Distribution
@@ -18,13 +16,17 @@ def deep_leakage(model, origin_grad, origin_label):
                               device=device)
 
     # optimizer to update random image
-    optimize = optim.LBFGS([dummy_data], lr=1.0, max_iter=300, history_size=100)
+    optimize = optim.LBFGS([dummy_data],
+                           lr=1.0,
+                           max_iter=20, 
+                           history_size=100,
+                           )
 
     # loss function using Mean Squared Error
     mse_loss = nn.MSELoss()
     crossEnt = nn.CrossEntropyLoss()
     # steps = int(input("Enter number of steps: "))
-    steps = 300
+    steps = 1200
 
     def closure():
         optimize.zero_grad()
@@ -47,7 +49,7 @@ def deep_leakage(model, origin_grad, origin_label):
     for i in range(steps):
         # reset gradient so future calculations are not influenced
         loss_val = optimize.step(closure)
-        if i % 10 == 0:
+        if i % 50 == 0:
             print(f"Step: {i}, Loss: {loss_val.item()}")
             save_image(dummy_data.data, "reconstructed_image.png")
     return dummy_data
@@ -81,10 +83,8 @@ def main():
     test_load = DataLoader(test_data, batch_size=1, shuffle=False)
 
     # define model
-    # myModel = resnet18(pretrained=False)
-    myModel = LeNet(channel=3, hidden=768, num_classes=10)
-    myMOdel.apply(weights_init)
-    myModel = myModel.to(device)
+    myModel = resnet20().to(device)
+    # myModel.apply(weights_init)
     # myModel.eval()
 
     # cross entropy
