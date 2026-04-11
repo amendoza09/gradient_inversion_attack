@@ -1,126 +1,190 @@
+import argparse
+import matplotlib.pyplot as plt
 import torch
 import certifi
 import ssl
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import matplotlib.pyplot as plt
-from torchvision import datasets, transforms
+from torch.autograd import grad
 from torch.utils.data import DataLoader
+from torchvision import datasets, models, transforms
 from torchvision.utils import save_image
-from pytorch_resnet_cifar10.resnet import resnet20
-#from PyTorch_CIFAR10.cifar10_models.resnet import resnet18
+from lenet import LeNet, weights_init
 
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 
-def deep_leakage(model, origin_grad, origin_label):
-    # initialize random data using Gaussian Distribution
-    dummy_data = torch.normal(mean=0.5, std=0.1, size=(1, 3, 32, 32),
-                              requires_grad=True,
-                              device=device)
+def parse_args():
+    parser = argparse.ArgumentParser(description="Deep Leakage from Gradients")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Device to use: 'auto' (GPU if available, else CPU), 'cpu', or 'cuda'",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=300,
+        help="Number of optimization steps (default: 300)",
+    )
+    parser.add_argument(
+        "--image-index",
+        type=int,
+        default=0,
+        help="Index of the image to use from the test dataset (default: 0)",
+    )
+    return parser.parse_args()
 
-    # optimizer to update random image
-    optimize = optim.LBFGS([dummy_data],
-                           lr=0.1,
-                           max_iter=100, 
-                           history_size=100,
-                           )
+def get_device(device_arg: str) -> torch.device:
+    if device_arg == "auto":
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    elif device_arg == "cuda":
+        if not torch.cuda.is_available():
+            print("Warning: CUDA requested but not available. Falling back to CPU.")
+            device = torch.device("cpu")
+        else:
+            device = torch.device("cuda:0")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
+    return device
 
-    # loss function using Mean Squared Error
+def deep_leakage(model, origin_grad, origin_label, device, steps=300):
+    dummy_data = torch.normal(
+        mean=0.5, std=0.1, size=(1, 3, 32, 32),
+        requires_grad=True,
+        device=device,
+    )
+
+    optimize = optim.LBFGS([dummy_data], lr=0.5, max_iter=20, history_size=100)
     mse_loss = nn.MSELoss()
     crossEnt = nn.CrossEntropyLoss()
-    # steps = int(input("Enter number of steps: "))
-    steps = 1200
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                  std=[0.229, 0.224, 0.225])
+    history = []  # collect snapshots here
 
     def closure():
-        dummy_data.data.clamp_(0, 1)
         optimize.zero_grad()
-
         output = model(dummy_data)
         loss = crossEnt(output, origin_label)
-
-        # Calculate gradients for random data
-        reconstructed_grad = torch.autograd.grad(loss, model.parameters(), create_graph=True)
-
-        # Compute the loss for matching gradients
+        reconstructed_grad = torch.autograd.grad(
+            loss, model.parameters(), create_graph=True
+        )
         grad_loss = sum(
             mse_loss(reconstructed_g, origin_g)
             for reconstructed_g, origin_g in zip(reconstructed_grad, origin_grad)
         )
-
-        grad_loss.backward()  # Backpropagate the gradient loss
+        grad_loss.backward()
         return grad_loss
 
     for i in range(steps):
-        # reset gradient so future calculations are not influenced
         loss_val = optimize.step(closure)
-        if i % 1 == 0:
-            print(f"Step {i} | grad_loss: {loss_val.item():.8f} | "
-                f"dummy mean: {dummy_data.data.mean():.4f} | "
-                f"dummy std: {dummy_data.data.std():.4f}")
-            save_image(dummy_data.data, "reconstructed_image.png")
-    return dummy_data
+        if i % 50 == 0:
+            print(f"Step: {i}, Loss: {loss_val.item():.9f}")
+            # save snapshot every 50 steps
+            snapshot = dummy_data.detach().cpu().numpy()[0].transpose(1, 2, 0)
+            snapshot = (snapshot - snapshot.min()) / (snapshot.max() - snapshot.min())  # normalize for display
+            history.append(snapshot)
 
+    save_image(dummy_data.data, "reconstructed_image.png")
+    return dummy_data, history
 
-def visualize_dummy_data(dummy_data):
-    # Convert to numpy for visualization
-    dummy_data_np = dummy_data.detach().cpu().numpy()
+def reconstruct_label(origin_grad, model):
+    # The true label corresponds to the most negative gradient 
+    # in the final fully connected layer's weight gradients
+    last_weight_grad = origin_grad[-2]  # second to last = FC weight grad
+    reconstructed_label = torch.argmin(torch.sum(last_weight_grad, dim=-1))
+    return reconstructed_label.reshape((1,))
 
-    # Plot the first few images
-    num_images = min(5, dummy_data_np.shape[0])
-    plt.figure(figsize=(10, 2))
-    for i in range(num_images):
-        plt.subplot(1, num_images, i + 1)
-        plt.imshow(dummy_data_np[i].transpose(1, 2, 0))  # Change shape for plotting
+def visualize_dummy_data(dummy_data, history, target_image):
+    # normalize target for display
+    target_np = target_image.detach().cpu().numpy()[0].transpose(1, 2, 0)
+    target_np = (target_np - target_np.min()) / (target_np.max() - target_np.min())
+
+    num_snapshots = len(history)
+    cols = 7
+    rows = (num_snapshots + cols - 1) // cols  # dynamic rows based on steps
+
+    plt.figure(figsize=(cols * 2, rows * 2 + 2))
+
+    for i, snapshot in enumerate(history):
+        plt.subplot(rows + 1, cols, i + 1)
+        plt.imshow(snapshot)
+        plt.title(f"iter={i * 10}", fontsize=7)
         plt.axis("off")
+
+    # show target image in last row
+    plt.subplot(rows + 1, cols, num_snapshots + 1)
+    plt.imshow(target_np)
+    plt.title("target", fontsize=7)
+    plt.axis("off")
+
+    plt.suptitle("Reconstruction Progress", fontsize=12)
+    plt.tight_layout()
     plt.show()
-
-
+    
 def main():
-    # define transforms
+    args = parse_args()
+    device = get_device(args.device)
+
     transform = transforms.Compose([
-        # transforms.Resize((32, 32)),  # resnet size
+        transforms.Resize((32,32)),
         transforms.ToTensor(),
-        #transforms.Normalize((0.4915, 0.4822, 0.4465), (0.2471, 0.2435, 0.2616)),
     ])
-    # load test data
-    test_data = datasets.CIFAR10(
-        root="./pytorch_resnet_cifar10/data", train=False, download=False, transform=transform
+
+    # STL10 — same size, 100 classes instead of 10
+    # test_data = datasets.STL10(root="./data/", split="test", download=True, transform=transform)
+
+    # CIFAR10 - 10 classes
+    # test_data = datasets.CIFAR10(
+    #    root="./data/", train=False, download=False, transform=transform
+    #)
+    # CIFAR100 - 100 classes
+    test_data = datasets.CIFAR100(
+        root="./data/", train=False, download=False, transform=transform
     )
+
     test_load = DataLoader(test_data, batch_size=1, shuffle=False)
 
-    # define model
-    myModel = resnet20().to(device)
-    # checkpoint = torch.load('./pytorch_resnet_cifar10/save_resnet20/model.th', 
-                        # map_location=device)
-    # myModel.load_state_dict(checkpoint['state_dict'])
-    # myModel.apply(weights_init)
-    myModel.eval()
+    # Iterate to the correct index — remove the next(iter()) call below
+    for i, (image, label) in enumerate(test_load):
+        if i == args.image_index:
+            break
 
-    # cross entropy
+    # Define model
+    myModel = LeNet(channel=3, hidden=768, num_classes=100)
+    myModel.apply(weights_init)
+    myModel = myModel.to(device)
+
     crossEnt = nn.CrossEntropyLoss()
 
-    # Get one image and its label from the dataset
-    image, label = next(iter(test_load))
-    image, label = image.to(device), label.to(device)
-    save_image(image, "ground_truth.png")
+    # Use the image from the loop above — do NOT call next(iter()) again
+    save_image(image, "target_image.png")
 
-    
+    image = image.to(device)
     output = myModel(image)
-    loss = crossEnt(output, label)
 
+    real_label = label.to(device)
+    loss = crossEnt(output, real_label)
     myModel.zero_grad()
     loss.backward()
 
-    # getting gradients with respect to model parameter
     target_grads = [param.grad.detach().clone() for param in myModel.parameters()]
 
-    dummy_data = deep_leakage(myModel, target_grads, label)
-    visualize_dummy_data(dummy_data)
+    target_label = reconstruct_label(target_grads, myModel)
 
+    print(f"\n{'='*40}")
+    print(f"  Image index       : {args.image_index}")
+    print(f"  Real label        : {label.item()} ({test_data.classes[label.item()]})")
+    print(f"  Reconstructed     : {target_label.item()} ({test_data.classes[target_label.item()]})")
+    print(f"  Image shape       : {image.shape}")
+    print(f"  Saved to          : target_image.png")
+    print(f"{'='*40}\n")
 
+    target_image = image.cpu()
+
+    dummy_data, history = deep_leakage(myModel, target_grads, target_label, device, steps=args.steps)
+    visualize_dummy_data(dummy_data, history, target_image)
+    
 if __name__ == "__main__":
-    device = torch.device('cpu')
     main()
