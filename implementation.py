@@ -144,7 +144,7 @@ def main():
         root="./data/", train=False, download=False, transform=transform
     )
 
-    test_load = DataLoader(test_data, batch_size=1, shuffle=False)
+    test_load = DataLoader(test_data, batch_size=3, shuffle=False)
 
     # Iterate to the correct index — remove the next(iter()) call below
     for i, (image, label) in enumerate(test_load):
